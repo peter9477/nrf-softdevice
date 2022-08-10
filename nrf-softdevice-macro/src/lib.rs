@@ -99,7 +99,7 @@ pub fn gatt_server(_args: TokenStream, item: TokenStream) -> TokenStream {
         #struc
 
         impl #struct_name {
-            #struct_vis fn new(sd: &mut ::nrf_softdevice::Softdevice) -> Result<Self, #ble::gatt_server::RegisterError>
+            #struct_vis fn new(sd: &::nrf_softdevice::Softdevice) -> Result<Self, #ble::gatt_server::RegisterError>
             {
                 Ok(Self {
                     #code_register_init
