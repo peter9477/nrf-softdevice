@@ -5,100 +5,109 @@
 #[path = "../example_common.rs"]
 mod example_common;
 
+use core::cell::{Cell, RefCell};
 use core::mem;
 
 use defmt::{info, *};
 use embassy_executor::Spawner;
 use nrf_softdevice::ble::gatt_server::builder::ServiceBuilder;
 use nrf_softdevice::ble::gatt_server::characteristic::{Attribute, Metadata, Properties};
-use nrf_softdevice::ble::gatt_server::{CharacteristicHandles, RegisterError, WriteOp};
-use nrf_softdevice::ble::{gatt_server, peripheral, Connection, Uuid};
+use nrf_softdevice::ble::gatt_server::{RegisterError, WriteOp};
+use nrf_softdevice::ble::security::{IoCapabilities, SecurityHandler};
+use nrf_softdevice::ble::{
+    gatt_server, peripheral, Connection, EncryptionInfo, IdentityKey, MasterId, SecurityMode, SysAttrsReply, Uuid,
+};
 use nrf_softdevice::{raw, Softdevice};
+use static_cell::StaticCell;
 
-const DEVICE_INFORMATION: Uuid = Uuid::new_16(0x180a);
 const BATTERY_SERVICE: Uuid = Uuid::new_16(0x180f);
-
 const BATTERY_LEVEL: Uuid = Uuid::new_16(0x2a19);
-const MODEL_NUMBER: Uuid = Uuid::new_16(0x2a24);
-const SERIAL_NUMBER: Uuid = Uuid::new_16(0x2a25);
-const FIRMWARE_REVISION: Uuid = Uuid::new_16(0x2a26);
-const HARDWARE_REVISION: Uuid = Uuid::new_16(0x2a27);
-const SOFTWARE_REVISION: Uuid = Uuid::new_16(0x2a28);
-const MANUFACTURER_NAME: Uuid = Uuid::new_16(0x2a29);
-const PNP_ID: Uuid = Uuid::new_16(0x2a50);
 
 #[embassy_executor::task]
-async fn softdevice_task(sd: &'static Softdevice) -> ! {
-    sd.run().await
+async fn softdevice_task(sd: &'static Softdevice) {
+    sd.run().await;
 }
 
-#[repr(u8)]
-#[derive(Clone, Copy)]
-pub enum VidSource {
-    BluetoothSIG = 1,
-    UsbIF = 2,
+#[derive(Debug, Clone, Copy)]
+struct Peer {
+    master_id: MasterId,
+    key: EncryptionInfo,
+    peer_id: IdentityKey,
 }
 
-#[repr(C, packed)]
-#[derive(Clone, Copy)]
-pub struct PnPID {
-    pub vid_source: VidSource,
-    pub vendor_id: u16,
-    pub product_id: u16,
-    pub product_version: u16,
+pub struct Bonder {
+    peer: Cell<Option<Peer>>,
+    sys_attrs: RefCell<heapless::Vec<u8, 62>>,
 }
 
-#[derive(Debug, Default, defmt::Format)]
-pub struct DeviceInformation {
-    pub manufacturer_name: Option<&'static str>,
-    pub model_number: Option<&'static str>,
-    pub serial_number: Option<&'static str>,
-    pub hw_rev: Option<&'static str>,
-    pub fw_rev: Option<&'static str>,
-    pub sw_rev: Option<&'static str>,
+impl Default for Bonder {
+    fn default() -> Self {
+        Bonder {
+            peer: Cell::new(None),
+            sys_attrs: Default::default(),
+        }
+    }
 }
 
-pub struct DeviceInformationService {}
-
-impl DeviceInformationService {
-    pub fn new(sd: &mut Softdevice, pnp_id: &PnPID, info: DeviceInformation) -> Result<Self, RegisterError> {
-        let mut sb = ServiceBuilder::new(sd, DEVICE_INFORMATION)?;
-
-        Self::add_pnp_characteristic(&mut sb, pnp_id)?;
-        Self::add_opt_str_characteristic(&mut sb, MANUFACTURER_NAME, info.manufacturer_name)?;
-        Self::add_opt_str_characteristic(&mut sb, MODEL_NUMBER, info.model_number)?;
-        Self::add_opt_str_characteristic(&mut sb, SERIAL_NUMBER, info.serial_number)?;
-        Self::add_opt_str_characteristic(&mut sb, HARDWARE_REVISION, info.hw_rev)?;
-        Self::add_opt_str_characteristic(&mut sb, FIRMWARE_REVISION, info.fw_rev)?;
-        Self::add_opt_str_characteristic(&mut sb, SOFTWARE_REVISION, info.sw_rev)?;
-
-        let _service_handle = sb.build();
-
-        Ok(DeviceInformationService {})
+impl SecurityHandler for Bonder {
+    fn io_capabilities(&self) -> IoCapabilities {
+        IoCapabilities::DisplayOnly
     }
 
-    fn add_opt_str_characteristic(
-        sb: &mut ServiceBuilder,
-        uuid: Uuid,
-        val: Option<&'static str>,
-    ) -> Result<Option<CharacteristicHandles>, RegisterError> {
-        if let Some(val) = val {
-            let attr = Attribute::new(val);
-            let md = Metadata::new(Properties::new().read());
-            Ok(Some(sb.add_characteristic(uuid, attr, md)?.build()))
-        } else {
-            Ok(None)
+    fn can_bond(&self, _conn: &Connection) -> bool {
+        true
+    }
+
+    fn display_passkey(&self, passkey: &[u8; 6]) {
+        info!("The passkey is \"{:a}\"", passkey)
+    }
+
+    fn on_bonded(&self, _conn: &Connection, master_id: MasterId, key: EncryptionInfo, peer_id: IdentityKey) {
+        debug!("storing bond for: id: {}, key: {}", master_id, key);
+
+        // In a real application you would want to signal another task to permanently store the keys in non-volatile memory here.
+        self.sys_attrs.borrow_mut().clear();
+        self.peer.set(Some(Peer {
+            master_id,
+            key,
+            peer_id,
+        }));
+    }
+
+    fn get_key(&self, _conn: &Connection, master_id: MasterId) -> Option<EncryptionInfo> {
+        debug!("getting bond for: id: {}", master_id);
+
+        self.peer
+            .get()
+            .and_then(|peer| (master_id == peer.master_id).then_some(peer.key))
+    }
+
+    fn save_sys_attrs(&self, conn: &Connection) {
+        debug!("saving system attributes for: {}", conn.peer_address());
+
+        if let Some(peer) = self.peer.get() {
+            if peer.peer_id.is_match(conn.peer_address()) {
+                let mut sys_attrs = self.sys_attrs.borrow_mut();
+                let capacity = sys_attrs.capacity();
+                unwrap!(sys_attrs.resize(capacity, 0));
+                let len = unwrap!(gatt_server::get_sys_attrs(conn, &mut sys_attrs)) as u16;
+                sys_attrs.truncate(usize::from(len));
+                // In a real application you would want to signal another task to permanently store sys_attrs for this connection's peer
+            }
         }
     }
 
-    fn add_pnp_characteristic(sb: &mut ServiceBuilder, pnp_id: &PnPID) -> Result<CharacteristicHandles, RegisterError> {
-        // SAFETY: `PnPID` is `repr(C, packed)` so viewing it as an immutable slice of bytes is safe.
-        let val =
-            unsafe { core::slice::from_raw_parts(pnp_id as *const _ as *const u8, core::mem::size_of::<PnPID>()) };
+    fn load_sys_attrs(&self, setter: SysAttrsReply) {
+        let addr = setter.connection().peer_address();
+        debug!("loading system attributes for: {}", addr);
 
-        let attr = Attribute::new(val);
-        let md = Metadata::new(Properties::new().read());
-        Ok(sb.add_characteristic(PNP_ID, attr, md)?.build())
+        if let Some(peer) = self.peer.get() {
+            // In a real application you would loop through all stored peers to find a match
+            if peer.peer_id.is_match(addr) {
+                let attrs = self.sys_attrs.borrow();
+                unwrap!(setter.set_sys_attrs((!attrs.is_empty()).then(|| attrs.as_slice())));
+            }
+        }
     }
 }
 
@@ -111,7 +120,7 @@ impl BatteryService {
     pub fn new(sd: &mut Softdevice) -> Result<Self, RegisterError> {
         let mut service_builder = ServiceBuilder::new(sd, BATTERY_SERVICE)?;
 
-        let attr = Attribute::new(&[0u8]);
+        let attr = Attribute::new(&[0u8]).security(SecurityMode::JustWorks);
         let metadata = Metadata::new(Properties::new().read().notify());
         let characteristic_builder = service_builder.add_characteristic(BATTERY_LEVEL, attr, metadata)?;
         let characteristic_handles = characteristic_builder.build();
@@ -145,31 +154,14 @@ impl BatteryService {
 }
 
 struct Server {
-    _dis: DeviceInformationService,
     bas: BatteryService,
 }
 
 impl Server {
-    pub fn new(sd: &mut Softdevice, serial_number: &'static str) -> Result<Self, RegisterError> {
-        let dis = DeviceInformationService::new(
-            sd,
-            &PnPID {
-                vid_source: VidSource::UsbIF,
-                vendor_id: 0xDEAD,
-                product_id: 0xBEEF,
-                product_version: 0x0000,
-            },
-            DeviceInformation {
-                manufacturer_name: Some("Embassy"),
-                model_number: Some("M1234"),
-                serial_number: Some(serial_number),
-                ..Default::default()
-            },
-        )?;
-
+    pub fn new(sd: &mut Softdevice) -> Result<Self, RegisterError> {
         let bas = BatteryService::new(sd)?;
 
-        Ok(Self { _dis: dis, bas })
+        Ok(Self { bas })
     }
 }
 
@@ -190,7 +182,7 @@ impl gatt_server::Server for Server {
 }
 
 #[embassy_executor::main]
-async fn main(spawner: Spawner) {
+async fn main(spawner: Spawner) -> ! {
     info!("Hello World!");
 
     let config = nrf_softdevice::Config {
@@ -224,7 +216,7 @@ async fn main(spawner: Spawner) {
     };
 
     let sd = Softdevice::enable(&config);
-    let server = unwrap!(Server::new(sd, "12345678"));
+    let server = unwrap!(Server::new(sd));
     unwrap!(spawner.spawn(softdevice_task(sd)));
 
     #[rustfmt::skip]
@@ -238,10 +230,13 @@ async fn main(spawner: Spawner) {
         0x03, 0x03, 0x09, 0x18,
     ];
 
+    static BONDER: StaticCell<Bonder> = StaticCell::new();
+    let bonder = BONDER.init(Bonder::default());
+
     loop {
         let config = peripheral::Config::default();
         let adv = peripheral::ConnectableAdvertisement::ScannableUndirected { adv_data, scan_data };
-        let conn = unwrap!(peripheral::advertise_connectable(sd, adv, &config).await);
+        let conn = unwrap!(peripheral::advertise_pairable(sd, adv, &config, bonder).await);
 
         info!("advertising done!");
 
