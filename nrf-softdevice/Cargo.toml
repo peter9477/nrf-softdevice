@@ -34,6 +34,7 @@ ble-l2cap = []
 ble-gatt = []
 ble-gatt-server = ["ble-gatt"]
 ble-gatt-client = ["ble-gatt"]
+ble-gatt-client-flex = ["ble-gatt-client"]
 ble-sec = []
 
 critical-section-impl = ["critical-section/restore-state-bool"]

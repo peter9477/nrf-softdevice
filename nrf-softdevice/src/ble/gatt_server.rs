@@ -186,7 +186,7 @@ where
             let evt = match ble_evt.header.evt_id as u32 {
                 raw::BLE_GATTS_EVTS_BLE_GATTS_EVT_SYS_ATTR_MISSING => {
                     let _params = get_union_field(ble_evt, &gatts_evt.params.sys_attr_missing);
-                    trace!("gatts sys attr missing conn={:?}", gatts_evt.conn_handle);
+                    debug!("gatts sys attr missing conn={:?} hint={}", gatts_evt.conn_handle, _params.hint);
 
                     if let Some(conn) = Connection::from_handle(gatts_evt.conn_handle) {
                         #[cfg(feature = "ble-sec")]

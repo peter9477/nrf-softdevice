@@ -1,5 +1,7 @@
 //! Generic Attribute client. GATT clients consume functionality offered by GATT servers.
 
+#![allow(unused_mut, unused_variables)]
+
 use heapless::Vec;
 
 use crate::ble::*;
@@ -527,11 +529,16 @@ unsafe fn check_status(ble_evt: *const raw::ble_evt_t) -> Result<&'static raw::b
 
 pub(crate) unsafe fn on_evt(ble_evt: *const raw::ble_evt_t) {
     let gattc_evt = get_union_field(ble_evt, &(*ble_evt).evt.gattc_evt);
+
+    #[cfg(not(feature = "ble-gatt-client-flex"))]
     if (*ble_evt).header.evt_id == raw::BLE_GATTC_EVTS_BLE_GATTC_EVT_HVX as u16 {
         hvx_portal(gattc_evt.conn_handle).call(ble_evt);
     } else {
         portal(gattc_evt.conn_handle).call(ble_evt);
     }
+
+    #[cfg(feature = "ble-gatt-client-flex")]
+    portal(gattc_evt.conn_handle).call(ble_evt);
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -663,6 +670,484 @@ where
             if let Some(evt) = evt {
                 f(evt);
             }
+
+            None
+        })
+        .await
+}
+
+
+//--------------------------------------------------
+// "Flex" stuff is a replacement for the original client support,
+// which was very limited and would panic in certain cases that
+// can easily be seen in the field, among other limitations.
+
+pub fn flex_discover_service(conn: &Connection, start_handle: u16, uuid: Option<Uuid>) -> Result<(), FlexClientError> {
+    let conn_handle = conn.with_state(|state| state.check_connected())?;
+    let ret = unsafe { raw::sd_ble_gattc_primary_services_discover(conn_handle, start_handle,
+        match &uuid {
+            Some(uuid) => uuid.as_raw_ptr(),
+            None => core::ptr::null(),
+        }
+    ) };
+    RawError::convert(ret).map_err(|err| {
+        warn!("sd_ble_gattc_primary_services_discover err {:?}", err);
+        err.into()
+    })
+}
+ 
+pub fn flex_discover_characteristic(conn: &Connection, start_handle: u16, end_handle: u16) -> Result<(), FlexClientError> {
+    let conn_handle = conn.with_state(|state| state.check_connected())?;
+    let ret = unsafe {
+        raw::sd_ble_gattc_characteristics_discover(
+            conn_handle,
+            &raw::ble_gattc_handle_range_t {
+                start_handle,
+                end_handle,
+            },
+        )
+    };
+    RawError::convert(ret).map_err(|err| {
+        warn!("sd_ble_gattc_characteristics_discover err {:?}", err);
+        err.into()
+    })
+}
+ 
+pub fn flex_discover_descriptors(conn: &Connection, start_handle: u16, end_handle: u16) -> Result<(), FlexClientError> {
+    let conn_handle = conn.with_state(|state| state.check_connected())?;
+    let ret = unsafe {
+        raw::sd_ble_gattc_descriptors_discover(
+            conn_handle,
+            &raw::ble_gattc_handle_range_t {
+                start_handle,
+                end_handle,
+            },
+        )
+    };
+    RawError::convert(ret).map_err(|err| {
+        warn!("sd_ble_gattc_descriptors_discover err {:?}", err);
+        err.into()
+    })
+}
+ 
+pub fn flex_write(conn: &Connection, handle: u16, buf: &[u8]) -> Result<(), FlexClientError> {
+    let conn_handle = conn.with_state(|state| state.check_connected())?;
+
+    assert!(buf.len() <= u16::MAX as usize);
+    let params = raw::ble_gattc_write_params_t {
+        write_op: raw::BLE_GATT_OP_WRITE_REQ as u8,
+        flags: 0,
+        handle,
+        p_value: buf.as_ptr(),
+        len: buf.len() as u16,
+        offset: 0,
+    };
+
+    let ret = unsafe { raw::sd_ble_gattc_write(conn_handle, &params) };
+    RawError::convert(ret).map_err(|err| {
+        warn!("sd_ble_gattc_write err {:?}", err);
+        err.into()
+    })
+}
+ 
+pub fn flex_att_mtu_exchange(conn: &Connection, mtu: u16) -> Result<(), FlexClientError> {
+    let conn_handle = conn.with_state(|state| state.check_connected())?;
+
+    let current_mtu = conn.with_state(|state| state.att_mtu);
+
+    // You can't reduce the MTU (or change it once set) so this is a no-op.
+    // Note that with the "flex" design this means you won't know whether
+    // or not to expect an event.
+    if current_mtu >= mtu {
+        return Ok(());
+    }
+
+    let ret = unsafe { raw::sd_ble_gattc_exchange_mtu_request(conn_handle, mtu) };
+    RawError::convert(ret).map_err(|err| {
+        warn!("sd_ble_gattc_exchange_mtu_request err {:?}", err);
+        err.into()
+    })
+}
+
+/// Confirm receipt of an indication.
+pub fn flex_hv_confirm(conn: &Connection, handle: u16) -> Result<(), FlexClientError> {
+    let conn_handle = conn.with_state(|state| state.check_connected())?;
+    let ret = unsafe { raw::sd_ble_gattc_hv_confirm(conn_handle, handle) };
+    RawError::convert(ret).map_err(|err| {
+        warn!("sd_ble_gattc_hv_confirm err {:?}", err);
+        err.into()
+    })
+}
+
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct DiscoveryError;
+
+
+/// Discovered service
+pub struct Service {
+    pub uuid: Uuid,
+    pub start_handle: u16,
+    pub end_handle: u16,
+}
+
+// Had trouble implementing TryFrom (compiler and LSP whining about
+// not having Error defined *on the struct* rather than on the trait
+// impl, but whatever) so going manual for now:
+impl Service {
+    fn new(v: &raw::ble_gattc_service_t) -> Result<Self, DiscoveryError> {
+        let Some(uuid) = Uuid::from_raw(v.uuid) else {
+            return Err(DiscoveryError);
+        };
+
+        Ok(Self {
+            uuid,
+            start_handle: v.handle_range.start_handle,
+            end_handle: v.handle_range.end_handle,
+        })
+    }
+}
+
+// impl TryFrom<&raw::ble_gattc_service_t> for Service {
+//     type Error = DiscoveryError;
+    
+//     fn try_from(v: &raw::ble_gattc_service_t) -> Result<Self, Self::Error> {
+//         let Some(uuid) = Uuid::from_raw(v.uuid) else {
+//             return Err(Self::Error);
+//         };
+
+//         Ok(Self {
+//             uuid,
+//             start_handle: v.handle_range.start_handle,
+//             end_handle: v.handle_range.end_handle,
+//         })
+//     }
+// }
+
+
+pub struct FlexCharacteristic {
+    pub uuid: Uuid,
+    pub handle: u16,
+    // pub handle_cccd: Option<NonZeroU16>,
+}
+
+impl FlexCharacteristic {
+    fn new(v: &raw::ble_gattc_char_t) -> Result<Self, DiscoveryError> {
+        let Some(uuid) = Uuid::from_raw(v.uuid) else {
+            return Err(DiscoveryError);
+        };
+
+        Ok(Self {
+            uuid,
+            handle: v.handle_value,
+        })
+    }
+}
+// impl TryFrom<&raw::ble_gattc_char_t> for FlexCharacteristic {
+//     type Error = DiscoveryError;
+    
+//     fn try_from(v: &raw::ble_gattc_char_t) -> Result<Self, Self::Error> {
+//         let Some(uuid) = Uuid::from_raw(v.uuid) else {
+//             return Err(Self::Error);
+//         };
+
+//         Ok(Self {
+//             uuid,
+//             handle: v.handle_value,
+//         })
+//     }
+// }
+    
+pub struct FlexDescriptor {
+    pub uuid: Uuid,
+    pub handle: u16,
+}
+
+impl FlexDescriptor {
+    fn new(v: &raw::ble_gattc_desc_t) -> Result<Self, DiscoveryError> {
+        let Some(uuid) = Uuid::from_raw(v.uuid) else {
+            return Err(DiscoveryError);
+        };
+
+        Ok(Self {
+            uuid,
+            handle: v.handle,
+        })
+    }
+}
+// impl TryFrom<&raw::ble_gattc_desc_t> for FlexDescriptor {
+//     type Error = DiscoveryError;
+    
+//     fn try_from(v: &raw::ble_gattc_desc_t) -> Result<Self, Self::Error> {
+//         let uuid = Uuid::from_raw(v.uuid) else {
+//             return Err(Self::Error);
+//         };
+
+//         Ok(Self {
+//             uuid,
+//             handle: v.handle,
+//         })
+//     }
+// }
+    
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum FlexClientError {
+    Disconnected,
+    Timeout,
+    Gatt(GattError),
+    Raw(RawError),
+}
+
+impl From<DisconnectedError> for FlexClientError {
+    fn from(_: DisconnectedError) -> Self {
+        Self::Disconnected
+    }
+}
+
+impl From<GattError> for FlexClientError {
+    fn from(err: GattError) -> Self {
+        Self::Gatt(err)
+    }
+}
+
+impl From<RawError> for FlexClientError {
+    fn from(err: RawError) -> Self {
+        Self::Raw(err)
+    }
+}
+
+/// Trait for implementing "flexible" GATT clients.
+#[allow(unused_variables)]
+pub trait FlexClient {
+    fn on_exchange_mtu_response(&self, mtu: u16) {}
+
+    fn on_service(&self, data: Service) {}
+    fn on_characteristics(&self, data: impl Iterator<Item = FlexCharacteristic>) {}
+    fn on_descriptors(&self, data: impl Iterator<Item = FlexDescriptor>) {}
+    fn on_discovery_failed(&self) {}
+
+    fn on_write_response(&self) {}
+    fn on_write_cmd_response(&self, count: u8) {}
+    fn on_read_response(&self, data: Result<&[u8], u16>) {}
+
+    /// Handles notification and indication events from the GATT server.
+    fn on_hvx(&self, type_: HvxType, handle: u16, data: &[u8]) {}
+}
+
+
+pub async fn run_flex<'a, C: FlexClient>(conn: &Connection, client: &C) -> FlexClientError {
+    let handle = match conn.with_state(|state| state.check_connected()) {
+        Ok(handle) => handle,
+        Err(e) => return e.into()
+    };
+
+    // debug!("wait_many");
+    portal(handle)
+        .wait_many(|ble_evt| unsafe {
+            let ble_evt = &*ble_evt;
+            let evt_id = u32::from(ble_evt.header.evt_id);
+
+            if evt_id == raw::BLE_GAP_EVTS_BLE_GAP_EVT_DISCONNECTED {
+                warn!("disconnected");
+                return Some(FlexClientError::Disconnected);
+            }
+
+            match check_status(ble_evt) {
+                Ok(_e) => debug!("evt {}", evt_id),
+                Err(err) => error!("err {:?}", err),
+            }
+
+            // If it's not a disconnect, we know it must be a GATTC event
+            // because that's the only other way we get events (ble::on_evt).
+            let gattc_evt = get_union_field(ble_evt, &ble_evt.evt.gattc_evt);
+            // pub struct ble_gattc_evt_t {
+            //     #[doc = "< Connection Handle on which event occurred."]
+            //     pub conn_handle: u16,
+            //     #[doc = "< GATT status code for the operation, see @ref BLE_GATT_STATUS_CODES."]
+            //     pub gatt_status: u16,
+            //     #[doc = "< In case of error: The handle causing the error. In all other cases @ref BLE_GATT_HANDLE_INVALID."]
+            //     pub error_handle: u16,
+            //     #[doc = "< Event Parameters. @note Only valid if @ref gatt_status == @ref BLE_GATT_STATUS_SUCCESS."]
+            //     pub params: ble_gattc_evt_t__bindgen_ty_1,
+            // 
+            // Is there some reason we don't just use a closure over the conn
+            // argument above?
+            // let conn = unwrap!(Connection::from_handle(gattc_evt.conn_handle));
+
+            let evt = match evt_id {
+                raw::BLE_GATTC_EVTS_BLE_GATTC_EVT_HVX => {
+                    // TODO: check gatt_status first, as params is invalid otherwise.
+                    let params = get_union_field(ble_evt, &gattc_evt.params.hvx);
+                    let data = get_flexarray(ble_evt, &params.data, params.len as usize);
+                    trace!(
+                        "GATT_HVX write handle={:?} type={:?} data={:?}",
+                        params.handle,
+                        params.type_,
+                        data
+                    );
+
+                    match params.type_.try_into() {
+                        Ok(type_) => client.on_hvx(type_, params.handle, data),
+                        Err(_) => {
+                            error!("gatt_client invalid hvx type: {}", params.type_);
+                        }
+                    }
+                }
+
+                // Response to MTU exchange request.
+                raw::BLE_GATTC_EVTS_BLE_GATTC_EVT_EXCHANGE_MTU_RSP => {
+                    let data = match check_status(ble_evt) {
+                        Ok(_) => {
+                            let params = get_union_field(ble_evt, &gattc_evt.params.exchange_mtu_rsp);
+                            let mtu = params.server_rx_mtu;
+                            debug!("att mtu exchange: got mtu {:?}", mtu);
+                            conn.with_state(|state| state.att_mtu = mtu);
+                            mtu
+                        }
+                        Err(e) => 0,
+                    };
+
+                    client.on_exchange_mtu_response(data);
+                }
+
+                // Response to primary service discovery
+                raw::BLE_GATTC_EVTS_BLE_GATTC_EVT_PRIM_SRVC_DISC_RSP => {
+                    let res: Option<Service> = match check_status(ble_evt) {
+                        Ok(_) => {
+                            let params = get_union_field(ble_evt, &gattc_evt.params.prim_srvc_disc_rsp);
+                            let v = get_flexarray(ble_evt, &params.services, params.count as usize);
+
+                            match v.len() {
+                                0 => None,
+                                1 => Service::new(&v[0]).ok(),
+                                _n => {
+                                    warn!(
+                                        "Found {:?} services with the same UUID, using the first one",
+                                        params.count
+                                    );
+                                    Service::new(&v[0]).ok()
+                                }
+                            }
+                        }
+
+                        Err(_) => None
+                    };
+
+                    match res {
+                        Some(data) => client.on_service(data.into()),
+                        None => client.on_discovery_failed(),
+                    }
+                }
+
+                // Response to characteristic discovery
+                raw::BLE_GATTC_EVTS_BLE_GATTC_EVT_CHAR_DISC_RSP => {
+                    match check_status(ble_evt) {
+                        Ok(_) => {
+                            let params = get_union_field(ble_evt, &gattc_evt.params.char_disc_rsp);
+                            let v = get_flexarray(ble_evt, &params.chars, params.count as usize);
+                            let mut idx = 0;
+                            let iter = core::iter::from_fn(move || {
+                                while idx < v.len() {
+                                    let item = &v[idx];
+                                    idx += 1;
+                                    if let Ok(v) = FlexCharacteristic::new(item) {
+                                        return Some(v);
+                                    }
+                                }
+                                None
+                            });
+
+                            client.on_characteristics(iter)
+                        }
+
+                        Err(_) => client.on_discovery_failed()
+                    }
+                 }
+
+                // Response to descriptor discovery
+                raw::BLE_GATTC_EVTS_BLE_GATTC_EVT_DESC_DISC_RSP => {
+                    match check_status(ble_evt) {
+                        Ok(_) => {
+                            let params = get_union_field(ble_evt, &gattc_evt.params.desc_disc_rsp);
+                            let v = get_flexarray(ble_evt, &params.descs, params.count as usize);
+                            let mut idx = 0;
+                            let iter = core::iter::from_fn(move || {
+                                while idx < v.len() {
+                                    let item = &v[idx];
+                                    idx += 1;
+                                    if let Ok(v) = FlexDescriptor::new(item) {
+                                        return Some(v);
+                                    }
+                                }
+                                None
+                            });
+                            client.on_descriptors(iter)
+                        }
+
+                        Err(_) => client.on_discovery_failed()
+                    }
+                }
+
+                // Response to read request
+                raw::BLE_GATTC_EVTS_BLE_GATTC_EVT_READ_RSP => {
+                    let data = match check_status(ble_evt) {
+                        Ok(evt) => {
+                            let params = get_union_field(ble_evt, &gattc_evt.params.read_rsp);
+                            let v = get_flexarray(ble_evt, &params.data, params.len as usize);
+                            Ok(v)
+                        }
+                        Err(e) => Err(0), // FIXME: need to extract from the event
+                    };
+                    // TODO: this is incomplete, as we should be handling things like
+                    // invalid handle, invalid offset, and maybe others. Not sure
+                    // where those show up.  Should we be turning this into
+                    // a new type, or pass in a tuple, or what?
+                    client.on_read_response(data)
+                }
+
+                raw::BLE_GATTC_EVTS_BLE_GATTC_EVT_WRITE_RSP => {
+                    match check_status(ble_evt) {
+                        Ok(_) => client.on_write_response(),
+                        Err(e) => {}
+                    }
+                }
+
+                // Response to write commmand. Tells you how many writes
+                // have been cleared from the queue, which may be useful
+                // in tracking whether there's space for more.
+                raw::BLE_GATTC_EVTS_BLE_GATTC_EVT_WRITE_CMD_TX_COMPLETE => {
+                    let count = 1; // TODO
+                    client.on_write_cmd_response(count)
+                }
+
+                // _ => todo!()
+                raw::BLE_GATTC_EVTS_BLE_GATTC_EVT_REL_DISC_RSP => {
+                    todo!()
+                }
+                raw::BLE_GATTC_EVTS_BLE_GATTC_EVT_ATTR_INFO_DISC_RSP => {
+                    todo!()
+                }
+                raw::BLE_GATTC_EVTS_BLE_GATTC_EVT_CHAR_VAL_BY_UUID_READ_RSP => {
+                    todo!()
+                }
+                raw::BLE_GATTC_EVTS_BLE_GATTC_EVT_CHAR_VALS_READ_RSP => {
+                    todo!()
+                }
+
+                // Timeout: a bit unclear what can cause this, but the docs
+                // seem clear that once it occurs you have little choice but
+                // to close the connection and start over.
+                raw::BLE_GATTC_EVTS_BLE_GATTC_EVT_TIMEOUT => {
+                    return Some(FlexClientError::Timeout);
+                }
+
+                // This should never be seen if all gattc events are covered
+                // above, but since they're just integers we need this for
+                // the rest of the range.
+                _ => {}
+            };
 
             None
         })
