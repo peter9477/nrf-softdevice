@@ -918,6 +918,8 @@ impl From<RawError> for FlexClientError {
     }
 }
 
+pub type WriteResult = Result<(), GattError>;
+
 /// Trait for implementing "flexible" GATT clients.
 #[allow(unused_variables)]
 pub trait FlexClient {
@@ -928,7 +930,7 @@ pub trait FlexClient {
     fn on_descriptors(&self, data: impl Iterator<Item = FlexDescriptor>) {}
     fn on_discovery_failed(&self) {}
 
-    fn on_write_response(&self) {}
+    fn on_write_response(&self, res: WriteResult) {}
     fn on_write_cmd_response(&self, count: u8) {}
     fn on_read_response(&self, data: Result<&[u8], u16>) {}
 
@@ -1108,10 +1110,8 @@ pub async fn run_flex<'a, C: FlexClient>(conn: &Connection, client: &C) -> FlexC
                 }
 
                 raw::BLE_GATTC_EVTS_BLE_GATTC_EVT_WRITE_RSP => {
-                    match check_status(ble_evt) {
-                        Ok(_) => client.on_write_response(),
-                        Err(e) => {}
-                    }
+                    let res = check_status(ble_evt).map(|_| ()); // discard evt, keep the Err
+                    client.on_write_response(res);
                 }
 
                 // Response to write commmand. Tells you how many writes
@@ -1123,18 +1123,18 @@ pub async fn run_flex<'a, C: FlexClient>(conn: &Connection, client: &C) -> FlexC
                 }
 
                 // _ => todo!()
-                raw::BLE_GATTC_EVTS_BLE_GATTC_EVT_REL_DISC_RSP => {
-                    todo!()
-                }
-                raw::BLE_GATTC_EVTS_BLE_GATTC_EVT_ATTR_INFO_DISC_RSP => {
-                    todo!()
-                }
-                raw::BLE_GATTC_EVTS_BLE_GATTC_EVT_CHAR_VAL_BY_UUID_READ_RSP => {
-                    todo!()
-                }
-                raw::BLE_GATTC_EVTS_BLE_GATTC_EVT_CHAR_VALS_READ_RSP => {
-                    todo!()
-                }
+                // raw::BLE_GATTC_EVTS_BLE_GATTC_EVT_REL_DISC_RSP => {
+                //     todo!()
+                // }
+                // raw::BLE_GATTC_EVTS_BLE_GATTC_EVT_ATTR_INFO_DISC_RSP => {
+                //     todo!()
+                // }
+                // raw::BLE_GATTC_EVTS_BLE_GATTC_EVT_CHAR_VAL_BY_UUID_READ_RSP => {
+                //     todo!()
+                // }
+                // raw::BLE_GATTC_EVTS_BLE_GATTC_EVT_CHAR_VALS_READ_RSP => {
+                //     todo!()
+                // }
 
                 // Timeout: a bit unclear what can cause this, but the docs
                 // seem clear that once it occurs you have little choice but
@@ -1146,7 +1146,9 @@ pub async fn run_flex<'a, C: FlexClient>(conn: &Connection, client: &C) -> FlexC
                 // This should never be seen if all gattc events are covered
                 // above, but since they're just integers we need this for
                 // the rest of the range.
-                _ => {}
+                _ => {
+                    warn!("unhandled evt {}", evt_id);
+                }
             };
 
             None
