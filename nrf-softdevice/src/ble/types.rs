@@ -528,9 +528,11 @@ macro_rules! error_codes {
                 if self.is_app_error() {
                     defmt::write!(fmt, "Application Error: 0x{:02x}", self.0 as u8);
                 } else {
+                    #[allow(unused_doc_comments)]
                     match *self {
                         Self::SUCCESS => defmt::write!(fmt, "Success"),
                         $(
+                        $(#[$docs])*
                         Self::$konst => defmt::write!(fmt, $phrase),
                         )+
                         _ => defmt::write!(fmt, "Unknown GATT status: 0x{:04x}", self.0),
@@ -544,9 +546,11 @@ macro_rules! error_codes {
                 if self.is_app_error() {
                     core::write!(fmt, "Application Error: 0x{:02x}", self.0 as u8)
                 } else {
+                    #[allow(unused_doc_comments)]
                     match *self {
                         Self::SUCCESS => core::write!(fmt, "Success"),
                         $(
+                        $(#[$docs])*
                         Self::$konst => core::write!(fmt, $phrase),
                         )+
                         _ => core::write!(fmt, "Unknown GATT status: 0x{:04x}", self.0),
@@ -653,8 +657,10 @@ macro_rules! hci_status_codes {
         #[cfg(feature = "defmt")]
         impl defmt::Format for HciStatus {
             fn format(&self, fmt: defmt::Formatter) {
+                #[allow(unused_doc_comments)]
                 match *self {
                     $(
+                    $(#[$docs])*
                     Self::$konst => defmt::write!(fmt, $phrase),
                     )+
                     _ => defmt::write!(fmt, "Unknown HCI status: 0x{:02x}", self.0),
@@ -664,8 +670,10 @@ macro_rules! hci_status_codes {
 
         impl core::fmt::Debug for HciStatus {
             fn fmt(&self, fmt: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                #[allow(unused_doc_comments)]
                 match *self {
                     $(
+                    $(#[$docs])*
                     Self::$konst => core::write!(fmt, $phrase),
                     )+
                     _ => core::write!(fmt, "Unknown HCI status: 0x{:02x}", self.0),
@@ -712,7 +720,7 @@ hci_status_codes! {
     (LMP_RESPONSE_TIMEOUT, raw::BLE_HCI_STATUS_CODE_LMP_RESPONSE_TIMEOUT, "LMP Response Timeout");
     /// LMP Error Transaction Collision
     #[cfg(not(feature = "api-v4"))]
-    // (LMP_ERROR_TRANSACTION_COLLISION, raw::BLE_HCI_STATUS_CODE_LMP_ERROR_TRANSACTION_COLLISION, "LMP Error Transaction Collision");
+    (LMP_ERROR_TRANSACTION_COLLISION, raw::BLE_HCI_STATUS_CODE_LMP_ERROR_TRANSACTION_COLLISION, "LMP Error Transaction Collision");
     /// LMP PDU Not Allowed
     (LMP_PDU_NOT_ALLOWED, raw::BLE_HCI_STATUS_CODE_LMP_PDU_NOT_ALLOWED, "LMP PDU Not Allowed");
     /// Instant Passed
@@ -723,7 +731,7 @@ hci_status_codes! {
     (DIFFERENT_TRANSACTION_COLLISION, raw::BLE_HCI_DIFFERENT_TRANSACTION_COLLISION, "Different Transaction Collision");
     /// Parameter Out Of Mandatory Range
     #[cfg(not(feature = "api-v4"))]
-    // (PARAMETER_OUT_OF_MANDATORY_RANGE, raw::BLE_HCI_PARAMETER_OUT_OF_MANDATORY_RANGE, "Parameter Out Of Mandatory Range");
+    (PARAMETER_OUT_OF_MANDATORY_RANGE, raw::BLE_HCI_PARAMETER_OUT_OF_MANDATORY_RANGE, "Parameter Out Of Mandatory Range");
     /// Controller Busy
     (CONTROLLER_BUSY, raw::BLE_HCI_CONTROLLER_BUSY, "Controller Busy");
     /// Unacceptable Connection Parameters
