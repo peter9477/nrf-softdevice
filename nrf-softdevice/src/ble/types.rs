@@ -129,6 +129,8 @@ impl SecurityMode {
 
         raw::ble_gap_conn_sec_mode_t {
             _bitfield_1: raw::ble_gap_conn_sec_mode_t::new_bitfield_1(sm, lv),
+            #[cfg(feature = "api-v4")]
+            _bitfield_align_1: [],
         }
     }
 }
@@ -603,6 +605,7 @@ error_codes! {
     /// ATT Error: Insufficient resources.
     (ATTERR_INSUF_RESOURCES, BLE_GATT_STATUS_ATTERR_INSUF_RESOURCES, "Insufficient Resources");
     /// ATT Common Profile and Service Error: Write request rejected.
+    #[cfg(not(feature = "api-v4"))]
     (ATTERR_CPS_WRITE_REQ_REJECTED, BLE_GATT_STATUS_ATTERR_CPS_WRITE_REQ_REJECTED, "Write Request Rejected");
     /// ATT Common Profile and Service Error: Client Characteristic Configuration Descriptor improperly configured.
     (ATTERR_CPS_CCCD_CONFIG_ERROR, BLE_GATT_STATUS_ATTERR_CPS_CCCD_CONFIG_ERROR, "Client Characteristic Configration Descriptor Improperly Configured");
@@ -708,7 +711,8 @@ hci_status_codes! {
     /// LMP Response Timeout
     (LMP_RESPONSE_TIMEOUT, raw::BLE_HCI_STATUS_CODE_LMP_RESPONSE_TIMEOUT, "LMP Response Timeout");
     /// LMP Error Transaction Collision
-    (LMP_ERROR_TRANSACTION_COLLISION, raw::BLE_HCI_STATUS_CODE_LMP_ERROR_TRANSACTION_COLLISION, "LMP Error Transaction Collision");
+    #[cfg(not(feature = "api-v4"))]
+    // (LMP_ERROR_TRANSACTION_COLLISION, raw::BLE_HCI_STATUS_CODE_LMP_ERROR_TRANSACTION_COLLISION, "LMP Error Transaction Collision");
     /// LMP PDU Not Allowed
     (LMP_PDU_NOT_ALLOWED, raw::BLE_HCI_STATUS_CODE_LMP_PDU_NOT_ALLOWED, "LMP PDU Not Allowed");
     /// Instant Passed
@@ -718,7 +722,8 @@ hci_status_codes! {
     /// Different Transaction Collision
     (DIFFERENT_TRANSACTION_COLLISION, raw::BLE_HCI_DIFFERENT_TRANSACTION_COLLISION, "Different Transaction Collision");
     /// Parameter Out Of Mandatory Range
-    (PARAMETER_OUT_OF_MANDATORY_RANGE, raw::BLE_HCI_PARAMETER_OUT_OF_MANDATORY_RANGE, "Parameter Out Of Mandatory Range");
+    #[cfg(not(feature = "api-v4"))]
+    // (PARAMETER_OUT_OF_MANDATORY_RANGE, raw::BLE_HCI_PARAMETER_OUT_OF_MANDATORY_RANGE, "Parameter Out Of Mandatory Range");
     /// Controller Busy
     (CONTROLLER_BUSY, raw::BLE_HCI_CONTROLLER_BUSY, "Controller Busy");
     /// Unacceptable Connection Parameters

@@ -47,6 +47,8 @@ impl AttributeMetadata {
                 self.deferred_read.into(),
                 self.deferred_write.into(),
             ),
+            #[cfg(feature = "api-v4")]
+            _bitfield_align_1: [],
         }
     }
 }
@@ -202,12 +204,16 @@ impl Properties {
                     self.indicate.into(),
                     self.signed_write.into(),
                 ),
+                #[cfg(feature = "api-v4")]
+                _bitfield_align_1: [],
             },
             raw::ble_gatt_char_ext_props_t {
                 _bitfield_1: raw::ble_gatt_char_ext_props_t::new_bitfield_1(
                     self.queued_write.into(),
                     self.write_user_description.into(),
                 ),
+                #[cfg(feature = "api-v4")]
+                _bitfield_align_1: [],
             },
         )
     }

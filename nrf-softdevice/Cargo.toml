@@ -13,6 +13,9 @@ rust-version = "1.76"
 [features]
 default = ["macros"]
 
+check-s132-v4 = [ "ble-peripheral", "nrf52832", "s132", "api-v4", "log",
+  "critical-section-impl", "ble-gatt-server"] # , "ble-sec", "ble-gatt-client-flex"]
+
 nrf52805 = []
 nrf52810 = []
 nrf52811 = []
@@ -26,6 +29,8 @@ s113 = ["nrf-softdevice-s113"]
 s122 = ["nrf-softdevice-s122"]
 s132 = ["nrf-softdevice-s132"]
 s140 = ["nrf-softdevice-s140"]
+
+api-v4 = []
 
 ble-rssi = []
 ble-peripheral = []

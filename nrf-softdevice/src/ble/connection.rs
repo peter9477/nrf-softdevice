@@ -3,7 +3,9 @@ use core::iter::FusedIterator;
 
 use raw::ble_gap_conn_params_t;
 
-use super::{HciStatus, PhySet};
+use super::HciStatus;
+#[cfg(not(feature = "api-v4"))]
+use super::PhySet;
 #[cfg(feature = "ble-central")]
 use crate::ble::gap::default_security_params;
 #[cfg(feature = "ble-sec")]
@@ -673,6 +675,7 @@ impl Connection {
     /// Note that this just initiates the PHY change, it does not wait for completion.
     /// Immediately after return, the active PHYs will still be the old ones, and after some time
     /// they should change to the new ones.
+    #[cfg(not(feature = "api-v4"))]
     pub fn phy_update(&mut self, tx_phys: PhySet, rx_phys: PhySet) -> Result<(), PhyUpdateError> {
         let conn_handle = self.with_state(|state| state.check_connected())?;
         let p_gap_phys = raw::ble_gap_phys_t {

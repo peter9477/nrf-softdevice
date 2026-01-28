@@ -59,7 +59,9 @@ pub struct Config {
     pub common_vs_uuid: Option<raw::ble_common_cfg_vs_uuid_t>,
     pub gap_role_count: Option<raw::ble_gap_cfg_role_count_t>,
     pub gap_device_name: Option<raw::ble_gap_cfg_device_name_t>,
+    #[cfg(not(feature = "api-v4"))]
     pub gap_ppcp_incl: Option<raw::ble_gap_cfg_ppcp_incl_cfg_t>,
+    #[cfg(not(feature = "api-v4"))]
     pub gap_car_incl: Option<raw::ble_gap_cfg_car_incl_cfg_t>,
     pub gatts_service_changed: Option<raw::ble_gatts_cfg_service_changed_t>,
     pub gatts_attr_tab_size: Option<raw::ble_gatts_cfg_attr_tab_size_t>,
@@ -204,6 +206,7 @@ impl Softdevice {
             );
         }
 
+        #[cfg(not(feature = "api-v4"))]
         if let Some(val) = config.gap_ppcp_incl {
             cfg_set(
                 raw::BLE_GAP_CFGS_BLE_GAP_CFG_PPCP_INCL_CONFIG,
@@ -213,6 +216,7 @@ impl Softdevice {
             );
         }
 
+        #[cfg(not(feature = "api-v4"))]
         if let Some(val) = config.gap_car_incl {
             cfg_set(
                 raw::BLE_GAP_CFGS_BLE_GAP_CFG_CAR_INCL_CONFIG,

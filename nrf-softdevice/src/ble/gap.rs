@@ -73,10 +73,17 @@ pub(crate) unsafe fn on_evt(ble_evt: *const raw::ble_evt_t) {
                 raw::BLE_GAP_TIMEOUT_SRC_CONN => central::CONNECT_PORTAL.call(ble_evt),
                 #[cfg(feature = "ble-central")]
                 raw::BLE_GAP_TIMEOUT_SRC_SCAN => central::SCAN_PORTAL.call(ble_evt),
+
+                raw::BLE_GAP_TIMEOUT_SRC_SECURITY_REQUEST => {
+                    warn!("security timeout");
+                }
+                // pub const BLE_GAP_TIMEOUT_SRC_ADVERTISING: u32 = 0;
+                // pub const BLE_GAP_TIMEOUT_SRC_AUTH_PAYLOAD: u32 = 4;
                 x => panic!("unknown timeout src {:?}", x),
             };
         }
         #[cfg(feature = "ble-peripheral")]
+        #[cfg(not(feature = "api-v4"))]
         raw::BLE_GAP_EVTS_BLE_GAP_EVT_ADV_SET_TERMINATED => {
             trace!("adv_set_termnated");
             peripheral::ADV_PORTAL.call(ble_evt);
@@ -86,6 +93,7 @@ pub(crate) unsafe fn on_evt(ble_evt: *const raw::ble_evt_t) {
             trace!("central on_adv_report");
             central::SCAN_PORTAL.call(ble_evt);
         }
+        #[cfg(not(feature = "api-v4"))]
         raw::BLE_GAP_EVTS_BLE_GAP_EVT_PHY_UPDATE_REQUEST => {
             let peer_preferred_phys = gap_evt.params.phy_update_request.peer_preferred_phys;
             let conn_handle = gap_evt.conn_handle;
@@ -108,6 +116,7 @@ pub(crate) unsafe fn on_evt(ble_evt: *const raw::ble_evt_t) {
                 warn!("sd_ble_gap_phy_update err {:?}", _err);
             }
         }
+        #[cfg(not(feature = "api-v4"))]
         raw::BLE_GAP_EVTS_BLE_GAP_EVT_PHY_UPDATE => {
             let _phy_update = gap_evt.params.phy_update;
 
@@ -300,6 +309,7 @@ pub(crate) unsafe fn on_evt(ble_evt: *const raw::ble_evt_t) {
                 });
             }
         }
+        #[cfg(not(feature = "api-v4"))]
         raw::BLE_GAP_EVTS_BLE_GAP_EVT_AUTH_STATUS => {
             let params = &gap_evt.params.auth_status;
             trace!(
