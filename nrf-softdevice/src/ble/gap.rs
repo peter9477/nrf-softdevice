@@ -74,6 +74,7 @@ pub(crate) unsafe fn on_evt(ble_evt: *const raw::ble_evt_t) {
                 #[cfg(feature = "ble-central")]
                 raw::BLE_GAP_TIMEOUT_SRC_SCAN => central::SCAN_PORTAL.call(ble_evt),
 
+                #[cfg(feature = "api-v4")]
                 raw::BLE_GAP_TIMEOUT_SRC_SECURITY_REQUEST => {
                     warn!("security timeout");
                 }

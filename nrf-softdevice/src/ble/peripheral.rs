@@ -416,18 +416,18 @@ pub async fn advertise_connectable(
     advertise_inner(sd, adv, config, Connection::new).await
 }
 
-// #[cfg(feature = "ble-sec")]
-// pub async fn advertise_pairable<'a>(
-//     sd: &'a Softdevice,
-//     adv: ConnectableAdvertisement<'a>,
-//     config: &'a Config,
-//     security_handler: &'static dyn crate::ble::security::SecurityHandler,
-// ) -> Result<Connection, AdvertiseError> {
-//     advertise_inner(sd, adv, config, |conn_handle, role, peer_address, conn_params| {
-//         Connection::with_security_handler(conn_handle, role, peer_address, conn_params, security_handler)
-//     })
-//     .await
-// }
+#[cfg(feature = "ble-sec")]
+pub async fn advertise_pairable<'a>(
+    sd: &'a Softdevice,
+    adv: ConnectableAdvertisement<'a>,
+    config: &'a Config,
+    security_handler: &'static dyn crate::ble::security::SecurityHandler,
+) -> Result<Connection, AdvertiseError> {
+    advertise_inner(sd, adv, config, |conn_handle, role, peer_address, conn_params| {
+        Connection::with_security_handler(conn_handle, role, peer_address, conn_params, security_handler)
+    })
+    .await
+}
 
 async fn advertise_inner<'a, F>(
     _sd: &'a Softdevice,

@@ -196,6 +196,8 @@ pub(crate) struct EncryptionState {
 const NEW_GAP_ENC_KEY: raw::ble_gap_enc_key_t = raw::ble_gap_enc_key_t {
     enc_info: raw::ble_gap_enc_info_t {
         ltk: [0; 16],
+        #[cfg(feature = "api-v4")]
+        _bitfield_align_1: [],
         _bitfield_1: raw::__BindgenBitfieldUnit::new([0; 1]),
     },
     master_id: raw::ble_gap_master_id_t { ediv: 0, rand: [0; 8] },
@@ -205,6 +207,8 @@ const NEW_GAP_ENC_KEY: raw::ble_gap_enc_key_t = raw::ble_gap_enc_key_t {
 const NEW_GAP_ID_KEY: raw::ble_gap_id_key_t = raw::ble_gap_id_key_t {
     id_info: raw::ble_gap_irk_t { irk: [0; 16] },
     id_addr_info: raw::ble_gap_addr_t {
+        #[cfg(feature = "api-v4")]
+        _bitfield_align_1: [],
         _bitfield_1: raw::__BindgenBitfieldUnit::new([0; 1]),
         addr: [0; 6],
     },
