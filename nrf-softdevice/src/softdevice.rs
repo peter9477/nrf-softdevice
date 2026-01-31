@@ -10,19 +10,19 @@ use crate::{raw, Interrupt, RawError, SocEvent};
 unsafe extern "C" fn fault_handler(id: u32, pc: u32, info: u32) {
     match (id, info) {
         (raw::NRF_FAULT_ID_SD_ASSERT, _) => panic!(
-            "Softdevice assertion failed: an assertion inside the softdevice's code has failed. Most common cause is disabling interrupts for too long. Make sure you're using nrf_softdevice::interrupt::free instead of cortex_m::interrupt::free, which disables non-softdevice interrupts only. PC={:x}",
+            "SD assertion. PC={:x}",
             pc
         ),
         (raw::NRF_FAULT_ID_APP_MEMACC, 0) => panic!(
-            "Softdevice memory access violation. Your program accessed RAM reserved to the softdevice. PC={:x}",
+            "SD RAM access violation. PC={:x}",
             pc
         ),
         (raw::NRF_FAULT_ID_APP_MEMACC, _) => panic!(
-            "Softdevice memory access violation. Your program accessed registers for a peripheral reserved to the softdevice. PC={:x} PREGION={:?}",
+            "SD peripheral access violation. PC={:x} PREGION={:?}",
             pc, info
         ),
         _ => panic!(
-            "Softdevice unknown fault id={:?} pc={:x} info={:?}",
+            "SD unknown fault id={:?} pc={:x} info={:?}",
             id, pc, info
         ),
     }
