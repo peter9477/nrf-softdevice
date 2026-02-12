@@ -73,7 +73,18 @@ pub(crate) unsafe fn on_evt(ble_evt: *const raw::ble_evt_t) {
                 raw::BLE_GAP_TIMEOUT_SRC_CONN => central::CONNECT_PORTAL.call(ble_evt),
                 #[cfg(feature = "ble-central")]
                 raw::BLE_GAP_TIMEOUT_SRC_SCAN => central::SCAN_PORTAL.call(ble_evt),
-                x => panic!("unknown timeout src {:?}", x),
+                x => {
+                    warn!("unknown timeout src {:?}", x);
+
+                    // 20260212 This was observed in the field in at least one case, with
+                    // no explanation. Rather than completely ignore it we've added
+                    // support for reporting obscure errors through to the Server so
+                    // we can eventually collect info on how often such things occur.
+                    #[cfg(feature = "ble-gatt-server")]
+                    gatt_server::on_evt(ble_evt);
+
+                    false // means nothing, required to match return type of other arms
+                }
             };
         }
         #[cfg(feature = "ble-peripheral")]

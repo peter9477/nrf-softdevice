@@ -91,6 +91,14 @@ impl TryFrom<u8> for WriteOp {
     }
 }
 
+#[repr(u8)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[non_exhaustive]
+pub enum ServerError {
+    AuthTimeout = 1,
+}
+
 pub trait Server: Sized {
     type Event;
 
@@ -143,6 +151,11 @@ pub trait Server: Sized {
         let _ = conn;
         None
     }
+
+    fn on_error(&self, conn: &Connection, err: ServerError) -> Option<Self::Event> {
+        let _ = (conn, err);
+        None
+    }
 }
 
 pub trait Service: Sized {
@@ -180,82 +193,87 @@ where
                 return Some(DisconnectedError);
             }
 
-            // If evt_id is not BLE_GAP_EVTS_BLE_GAP_EVT_DISCONNECTED, then it must be a GATTS event
-            let gatts_evt = get_union_field(ble_evt, &ble_evt.evt.gatts_evt);
-            let conn = unwrap!(Connection::from_handle(gatts_evt.conn_handle));
-            let evt = match ble_evt.header.evt_id as u32 {
-                raw::BLE_GATTS_EVTS_BLE_GATTS_EVT_SYS_ATTR_MISSING => {
-                    let _params = get_union_field(ble_evt, &gatts_evt.params.sys_attr_missing);
-                    debug!("gatts sys attr missing conn={:?} hint={}", gatts_evt.conn_handle, _params.hint);
+            let evt = if u32::from(ble_evt.header.evt_id) == raw::BLE_GAP_EVTS_BLE_GAP_EVT_TIMEOUT {
+                server.on_error(conn, ServerError::AuthTimeout)
+            }
+            else {
+                // If evt_id is not BLE_GAP_EVTS_BLE_GAP_EVT_DISCONNECTED, then it must be a GATTS event
+                let gatts_evt = get_union_field(ble_evt, &ble_evt.evt.gatts_evt);
+                let conn = unwrap!(Connection::from_handle(gatts_evt.conn_handle));
+                match ble_evt.header.evt_id as u32 {
+                    raw::BLE_GATTS_EVTS_BLE_GATTS_EVT_SYS_ATTR_MISSING => {
+                        let _params = get_union_field(ble_evt, &gatts_evt.params.sys_attr_missing);
+                        debug!("gatts sys attr missing conn={:?} hint={}", gatts_evt.conn_handle, _params.hint);
 
-                    if let Some(conn) = Connection::from_handle(gatts_evt.conn_handle) {
-                        #[cfg(feature = "ble-sec")]
-                        if let Some(handler) = conn.security_handler() {
-                            handler.load_sys_attrs(&conn);
-                        } else if let Err(err) = set_sys_attrs(&conn, None) {
-                            warn!("gatt_server failed to set sys attrs: {:?}", err);
-                        }
+                        if let Some(conn) = Connection::from_handle(gatts_evt.conn_handle) {
+                            #[cfg(feature = "ble-sec")]
+                            if let Some(handler) = conn.security_handler() {
+                                handler.load_sys_attrs(&conn);
+                            } else if let Err(err) = set_sys_attrs(&conn, None) {
+                                warn!("gatt_server failed to set sys attrs: {:?}", err);
+                            }
 
-                        #[cfg(not(feature = "ble-sec"))]
-                        if let Err(err) = set_sys_attrs(&conn, None) {
-                            warn!("gatt_server failed to set sys attrs: {:?}", err);
-                        }
-                    }
-
-                    None
-                }
-                raw::BLE_GATTS_EVTS_BLE_GATTS_EVT_WRITE => {
-                    let params = get_union_field(ble_evt, &gatts_evt.params.write);
-                    let offset = usize::from(params.offset);
-                    let v = get_flexarray(ble_evt, &params.data, params.len as usize);
-                    trace!("gatts write handle={:?} data={:?}", params.handle, v);
-
-                    match params.op.try_into() {
-                        Ok(op) => server.on_write(&conn, params.handle, op, offset, v),
-                        Err(_) => {
-                            error!("gatt_server invalid write op: {}", params.op);
-                            None
-                        }
-                    }
-                }
-                raw::BLE_GATTS_EVTS_BLE_GATTS_EVT_RW_AUTHORIZE_REQUEST => {
-                    let params = get_union_field(ble_evt, &gatts_evt.params.authorize_request);
-                    match params.type_ as u32 {
-                        raw::BLE_GATTS_AUTHORIZE_TYPE_READ => {
-                            let responder = DeferredReadReply::new(conn);
-                            let params = get_union_field(ble_evt, &params.request.read);
-                            trace!("gatts authorize read request handle={:?}", params.handle);
-                            server.on_deferred_read(params.handle, usize::from(params.offset), responder)
-                        }
-                        raw::BLE_GATTS_AUTHORIZE_TYPE_WRITE => {
-                            let responder = DeferredWriteReply::new(conn);
-                            let params = get_union_field(ble_evt, &params.request.write);
-                            let offset = usize::from(params.offset);
-                            let v = get_flexarray(ble_evt, &params.data, params.len as usize);
-                            trace!("gatts authorize write handle={:?} data={:?}", params.handle, v);
-
-                            match params.op.try_into() {
-                                Ok(op) => server.on_deferred_write(params.handle, op, offset, v, responder),
-                                Err(_) => {
-                                    error!("gatt_server invalid write op: {}", params.op);
-                                    None
-                                }
+                            #[cfg(not(feature = "ble-sec"))]
+                            if let Err(err) = set_sys_attrs(&conn, None) {
+                                warn!("gatt_server failed to set sys attrs: {:?}", err);
                             }
                         }
-                        _ => unreachable!(),
+
+                        None
                     }
+                    raw::BLE_GATTS_EVTS_BLE_GATTS_EVT_WRITE => {
+                        let params = get_union_field(ble_evt, &gatts_evt.params.write);
+                        let offset = usize::from(params.offset);
+                        let v = get_flexarray(ble_evt, &params.data, params.len as usize);
+                        trace!("gatts write handle={:?} data={:?}", params.handle, v);
+
+                        match params.op.try_into() {
+                            Ok(op) => server.on_write(&conn, params.handle, op, offset, v),
+                            Err(_) => {
+                                error!("gatt_server invalid write op: {}", params.op);
+                                None
+                            }
+                        }
+                    }
+                    raw::BLE_GATTS_EVTS_BLE_GATTS_EVT_RW_AUTHORIZE_REQUEST => {
+                        let params = get_union_field(ble_evt, &gatts_evt.params.authorize_request);
+                        match params.type_ as u32 {
+                            raw::BLE_GATTS_AUTHORIZE_TYPE_READ => {
+                                let responder = DeferredReadReply::new(conn);
+                                let params = get_union_field(ble_evt, &params.request.read);
+                                trace!("gatts authorize read request handle={:?}", params.handle);
+                                server.on_deferred_read(params.handle, usize::from(params.offset), responder)
+                            }
+                            raw::BLE_GATTS_AUTHORIZE_TYPE_WRITE => {
+                                let responder = DeferredWriteReply::new(conn);
+                                let params = get_union_field(ble_evt, &params.request.write);
+                                let offset = usize::from(params.offset);
+                                let v = get_flexarray(ble_evt, &params.data, params.len as usize);
+                                trace!("gatts authorize write handle={:?} data={:?}", params.handle, v);
+
+                                match params.op.try_into() {
+                                    Ok(op) => server.on_deferred_write(params.handle, op, offset, v, responder),
+                                    Err(_) => {
+                                        error!("gatt_server invalid write op: {}", params.op);
+                                        None
+                                    }
+                                }
+                            }
+                            _ => unreachable!(),
+                        }
+                    }
+                    raw::BLE_GATTS_EVTS_BLE_GATTS_EVT_HVN_TX_COMPLETE => {
+                        let params = get_union_field(ble_evt, &gatts_evt.params.hvn_tx_complete);
+                        server.on_notify_tx_complete(&conn, params.count)
+                    }
+                    raw::BLE_GATTS_EVTS_BLE_GATTS_EVT_HVC => {
+                        let params = get_union_field(ble_evt, &gatts_evt.params.hvc);
+                        server.on_indicate_confirm(&conn, params.handle)
+                    }
+                    raw::BLE_GATTS_EVTS_BLE_GATTS_EVT_SC_CONFIRM => server.on_services_changed_confirm(&conn),
+                    raw::BLE_GATTS_EVTS_BLE_GATTS_EVT_TIMEOUT => server.on_timeout(&conn),
+                    _ => None,
                 }
-                raw::BLE_GATTS_EVTS_BLE_GATTS_EVT_HVN_TX_COMPLETE => {
-                    let params = get_union_field(ble_evt, &gatts_evt.params.hvn_tx_complete);
-                    server.on_notify_tx_complete(&conn, params.count)
-                }
-                raw::BLE_GATTS_EVTS_BLE_GATTS_EVT_HVC => {
-                    let params = get_union_field(ble_evt, &gatts_evt.params.hvc);
-                    server.on_indicate_confirm(&conn, params.handle)
-                }
-                raw::BLE_GATTS_EVTS_BLE_GATTS_EVT_SC_CONFIRM => server.on_services_changed_confirm(&conn),
-                raw::BLE_GATTS_EVTS_BLE_GATTS_EVT_TIMEOUT => server.on_timeout(&conn),
-                _ => None,
             };
 
             if let Some(evt) = evt {
