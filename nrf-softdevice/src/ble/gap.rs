@@ -315,8 +315,7 @@ pub(crate) unsafe fn on_evt(ble_evt: *const raw::ble_evt_t) {
             if let Some(conn) = Connection::from_handle(gap_evt.conn_handle) {
                 conn.with_state(|state| {
                     if let Some(handler) = state.security.handler {
-                        let status = u32::from(params.auth_status);
-                        if status == raw::BLE_GAP_SEC_STATUS_SUCCESS && params.bonded() != 0 {
+                        if u32::from(params.auth_status) == raw::BLE_GAP_SEC_STATUS_SUCCESS && params.bonded() != 0 {
                             let peer_id = if params.kdist_peer.id() != 0 {
                                 IdentityKey::from_raw(state.security.peer_id)
                             } else {
@@ -338,7 +337,7 @@ pub(crate) unsafe fn on_evt(ble_evt: *const raw::ble_evt_t) {
                                 peer_id,
                             );
                         } else {
-                            handler.on_bonding_failed(&conn, status);
+                            handler.on_bonding_failed(&conn, params.auth_status, params.error_src());
                         }
                     }
                 });

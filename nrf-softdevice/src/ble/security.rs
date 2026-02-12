@@ -81,7 +81,7 @@ pub trait SecurityHandler {
     /// An attempt to bond has failed.
     ///
     /// Must be implemented if [`can_bond`][Self::can_bond] ever returns `true`.
-    fn on_bonding_failed(&self, _conn: &Connection, _status: u32) {
+    fn on_bonding_failed(&self, _conn: &Connection, _status: u8, _src: u8) {
         panic!("SecurityHandler::on_bond_failure not implemented")
     }
 
