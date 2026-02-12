@@ -1,0 +1,20 @@
+# Language support configuration.
+# See the languages documentation: https://docs.helix-editor.com/master/languages.html
+
+[language-server.rust-analyzer.config]
+cargo.target = "thumbv7em-none-eabihf" 
+cargo.allFeatures = false
+check.allTargets = false
+# cargo.features = ["macros", "ble-peripheral", "nrf52832", "s132", "ble-gatt-client-flex", "log", "critical-section-impl", "ble-gatt-server"]
+cargo.features = ["macros", "ble-sec", "ble-peripheral", "nrf52840", "s140", "log", "critical-section-impl", "ble-gatt-server"]
+
+[[language]]
+name = "rust"
+scope = "source.rust"
+injection-regex = "rust"
+file-types = ["rs"]
+roots = ["Cargo.toml", "Cargo.lock"]
+language-servers = ["rust-analyzer"]
+indent = { tab-width = 4, unit = "    " }
+
+auto-format = false
