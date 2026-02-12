@@ -302,9 +302,11 @@ pub async fn advertise(
     let res = ADV_PORTAL
         .wait_once(|ble_evt| unsafe {
             match (*ble_evt).header.evt_id as u32 {
+                // FIXME: it looks like this can't currently occur, because there's no way
+                // any other code can deliver this timeout here.
                 raw::BLE_GAP_EVTS_BLE_GAP_EVT_TIMEOUT => Err(AdvertiseError::Timeout),
                 raw::BLE_GAP_EVTS_BLE_GAP_EVT_ADV_SET_TERMINATED => Err(AdvertiseError::Timeout),
-                e => panic!("unexpected event {}", e),
+                _e => Err(RawError::Internal.into()),
             }
         })
         .await;
@@ -377,9 +379,11 @@ where
                         }
                     }
                 }
+                // FIXME: it looks like this can't currently occur, because there's no way
+                // any other code can deliver this timeout here.
                 raw::BLE_GAP_EVTS_BLE_GAP_EVT_TIMEOUT => Err(AdvertiseError::Timeout),
                 raw::BLE_GAP_EVTS_BLE_GAP_EVT_ADV_SET_TERMINATED => Err(AdvertiseError::Timeout),
-                e => panic!("unexpected event {}", e),
+                _e => Err(RawError::Internal.into()),
             }
         })
         .await;
