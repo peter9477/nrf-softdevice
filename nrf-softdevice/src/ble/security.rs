@@ -78,6 +78,13 @@ pub trait SecurityHandler {
         panic!("SecurityHandler::on_bonded not implemented")
     }
 
+    /// An attempt to bond has failed.
+    ///
+    /// Must be implemented if [`can_bond`][Self::can_bond] ever returns `true`.
+    fn on_bonding_failed(&self, _conn: &Connection, _status: u8, _src: u8) {
+        panic!("SecurityHandler::on_bond_failure not implemented")
+    }
+
     /// Search the store for a known peer identified by `master_id` and return its LTK.
     ///
     /// This is used for connections in the peripheral role.

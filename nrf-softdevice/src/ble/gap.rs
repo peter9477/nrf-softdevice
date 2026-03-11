@@ -27,7 +27,7 @@ pub(crate) unsafe fn on_evt(ble_evt: *const raw::ble_evt_t) {
             }
         }
         raw::BLE_GAP_EVTS_BLE_GAP_EVT_DISCONNECTED => {
-            trace!("on_disconnected conn_handle={:?}", gap_evt.conn_handle);
+            debug!("on_disconnected conn_handle={:?}", gap_evt.conn_handle);
             connection::with_state_by_conn_handle(gap_evt.conn_handle, |state| state.on_disconnected(ble_evt));
         }
         raw::BLE_GAP_EVTS_BLE_GAP_EVT_CONN_PARAM_UPDATE => {
@@ -77,10 +77,22 @@ pub(crate) unsafe fn on_evt(ble_evt: *const raw::ble_evt_t) {
                 #[cfg(feature = "api-v4")]
                 raw::BLE_GAP_TIMEOUT_SRC_SECURITY_REQUEST => {
                     warn!("security timeout");
+                    false
                 }
                 // pub const BLE_GAP_TIMEOUT_SRC_ADVERTISING: u32 = 0;
                 // pub const BLE_GAP_TIMEOUT_SRC_AUTH_PAYLOAD: u32 = 4;
-                x => panic!("unknown timeout src {:?}", x),
+                x => {
+                    warn!("unknown timeout src {:?}", x);
+
+                    // 20260212 This was observed in the field in at least one case, with
+                    // no explanation. Rather than completely ignore it we've added
+                    // support for reporting obscure errors through to the Server so
+                    // we can eventually collect info on how often such things occur.
+                    #[cfg(feature = "ble-gatt-server")]
+                    gatt_server::on_evt(ble_evt);
+
+                    false // means nothing, required to match return type of other arms
+                }
             };
         }
         #[cfg(feature = "ble-peripheral")]
@@ -177,7 +189,7 @@ pub(crate) unsafe fn on_evt(ble_evt: *const raw::ble_evt_t) {
         raw::BLE_GAP_EVTS_BLE_GAP_EVT_SEC_PARAMS_REQUEST => {
             let params = &gap_evt.params.sec_params_request;
             let peer_params = params.peer_params;
-            trace!("ble evt sec params request conn={:x}, bond={:?}, io_caps={:?}, keypress={:?}, lesc={:?}, mitm={:?}, oob={:?}, key_size={}..={}",
+            debug!("ble evt sec params request conn={:x}, bond={:?}, io_caps={:?}, keypress={:?}, lesc={:?}, mitm={:?}, oob={:?}, key_size={}..={}",
                     gap_evt.conn_handle, peer_params.bond(), peer_params.io_caps(), peer_params.keypress(), peer_params.lesc(), peer_params.mitm(), peer_params.oob(),
                     peer_params.min_key_size, peer_params.max_key_size);
 
@@ -267,7 +279,7 @@ pub(crate) unsafe fn on_evt(ble_evt: *const raw::ble_evt_t) {
         #[cfg(feature = "ble-peripheral")]
         raw::BLE_GAP_EVTS_BLE_GAP_EVT_SEC_INFO_REQUEST => {
             let params = &gap_evt.params.sec_info_request;
-            trace!("ble evt sec info request: enc_info={}, id_info={}, sign_info={}, master_id: {{ ediv: {:x}, rand: {:?} }}, peer_addr: {{ addr: {:?}, addr_id_peer: {}, addr_type: {} }}",
+            debug!("ble evt sec info request: enc_info={}, id_info={}, sign_info={}, master_id: {{ ediv: {:x}, rand: {:?} }}, peer_addr: {{ addr: {:?}, addr_id_peer: {}, addr_type: {} }}",
                 params.enc_info(), params.id_info(), params.sign_info(), params.master_id.ediv, params.master_id.rand,
                 params.peer_addr.addr, params.peer_addr.addr_id_peer(), params.peer_addr.addr_type());
 
@@ -294,7 +306,7 @@ pub(crate) unsafe fn on_evt(ble_evt: *const raw::ble_evt_t) {
         }
         raw::BLE_GAP_EVTS_BLE_GAP_EVT_CONN_SEC_UPDATE => {
             let params = &gap_evt.params.conn_sec_update;
-            trace!(
+            debug!(
                 "ble evt conn sec update sec_mode=({},{}), encr_key_size={}",
                 params.conn_sec.sec_mode.sm(),
                 params.conn_sec.sec_mode.lv(),
@@ -310,22 +322,33 @@ pub(crate) unsafe fn on_evt(ble_evt: *const raw::ble_evt_t) {
                 });
             }
         }
-        #[cfg(not(feature = "api-v4"))]
+
         raw::BLE_GAP_EVTS_BLE_GAP_EVT_AUTH_STATUS => {
             let params = &gap_evt.params.auth_status;
-            trace!(
-                "ble evt auth status: bonded={}, error_src={}, lesc={}, kdist_own={}, kdist_peer={}",
+            #[cfg(not(feature = "api-v4"))]
+            debug!(
+                "ble evt auth status: status={} bonded={}, error_src={}, lesc={}, kdist_own={}, kdist_peer={}",
+                params.auth_status,
                 params.bonded(),
                 params.error_src(),
                 params.lesc(),
                 params.kdist_own._bitfield_1.get(0, 8),
                 params.kdist_peer._bitfield_1.get(0, 8)
             );
+            #[cfg(feature = "api-v4")]
+            debug!(
+                "ble evt auth status: status={} bonded={}, error_src={}, kdist_own={}, kdist_peer={}",
+                params.auth_status,
+                params.bonded(),
+                params.error_src(),
+                params.kdist_own._bitfield_1.get(0, 8),
+                params.kdist_peer._bitfield_1.get(0, 8)
+            );
             #[cfg(feature = "ble-sec")]
-            if u32::from(params.auth_status) == raw::BLE_GAP_SEC_STATUS_SUCCESS && params.bonded() != 0 {
-                if let Some(conn) = Connection::from_handle(gap_evt.conn_handle) {
-                    conn.with_state(|state| {
-                        if let Some(handler) = state.security.handler {
+            if let Some(conn) = Connection::from_handle(gap_evt.conn_handle) {
+                conn.with_state(|state| {
+                    if let Some(handler) = state.security.handler {
+                        if u32::from(params.auth_status) == raw::BLE_GAP_SEC_STATUS_SUCCESS && params.bonded() != 0 {
                             let peer_id = if params.kdist_peer.id() != 0 {
                                 IdentityKey::from_raw(state.security.peer_id)
                             } else {
@@ -346,9 +369,11 @@ pub(crate) unsafe fn on_evt(ble_evt: *const raw::ble_evt_t) {
                                 EncryptionInfo::from_raw(enc_key.enc_info),
                                 peer_id,
                             );
+                        } else {
+                            handler.on_bonding_failed(&conn, params.auth_status, params.error_src());
                         }
-                    });
-                }
+                    }
+                });
             }
         }
         #[cfg(feature = "ble-central")]

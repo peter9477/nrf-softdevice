@@ -20,6 +20,11 @@ fn linker_data() -> &'static [u8] {
     return include_bytes!("memory-nrf52833.x");
     #[cfg(feature = "nrf52840")]
     return include_bytes!("memory-nrf52840.x");
+
+    // cargo check led to whining about this as though no features were defined
+    // so I tossed this in to shut it up.
+    #[allow(unreachable_code)]
+    return b"";
 }
 
 fn main() {
